@@ -9,6 +9,9 @@ from unidecode import unidecode
 
 from .youtrack import YouTrackClient
 
+import logging
+
+logger = logging.getLogger(__name__)
 
 VERIFY_SSL_CERTIFICATE = getattr(
     settings, 'YOUTRACK_VERIFY_SSL_CERTIFICATE', True)
@@ -119,6 +122,8 @@ class DefaultFieldForm(forms.Form):
 
     def save(self):
         data = self.cleaned_data
+        logger.debug('data: %s' % str(data))
+        logger.debug('self.project: %s' % str(self.project))
         default_fields = self.plugin.get_option(
             self.plugin.default_fields_key, self.project) or {}
         default_fields[md5(unidecode(data['field'])).hexdigest()] = data['value']
@@ -132,6 +137,7 @@ class YouTrackConfigurationForm(forms.Form):
         'client': _("Unable to connect to YouTrack."),
         'invalid_ssl': _("SSL certificate  verification failed."),
         'invalid_password': _('Invalid username or password.'),
+        'invalid_url': _('Cannot get any project from this URL.'),
         'invalid_project': _('Invalid project: \'%s\''),
         'missing_fields': _('Missing required fields.'),
         'perms': _("User doesn't have Low-level Administration permissions."),
@@ -172,6 +178,7 @@ class YouTrackConfigurationForm(forms.Form):
         self.client_errors = {}
 
         initial = kwargs.get("initial")
+        logger.debug('initial: %s' % str(initial))
         if initial:
             client = self.get_youtrack_client(initial)
             if not client:
@@ -218,7 +225,7 @@ class YouTrackConfigurationForm(forms.Form):
         choices = [(' ', u"- Choose project -")]
         try:
             projects = list(client.get_projects())
-        except HTTPError:
+        except (HTTPError, TypeError):
             self.client_errors['project'] = self.error_message[
                 'invalid_project'] % (project, )
         else:
@@ -240,6 +247,8 @@ class YouTrackConfigurationForm(forms.Form):
         try:
             client = YouTrackClient(**yt_settings)
         except (HTTPError, ConnectionError) as e:
+            logger.debug('e: %s' % e)
+            logger.debug("e.response: {}".format(e.response))
             if e.response is not None and e.response.status_code == 403:
                 self.client_errors['username'] = self.error_message[
                     'invalid_password']
@@ -248,6 +257,10 @@ class YouTrackConfigurationForm(forms.Form):
         except (SSLError, TypeError) as e:
             self.client_errors['url'] = self.error_message['invalid_ssl']
         if client:
+            try:
+                list(client.get_projects())
+            except TypeError:
+                self.client_errors['url'] = self.error_message['invalid_url']
             try:
                 client.get_user(yt_settings.get('username'))
             except HTTPError as e:
